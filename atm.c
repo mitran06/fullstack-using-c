@@ -7,7 +7,7 @@
 #define GIST_ID getenv("GIST_ID")
 #define GITHUB_TOKEN getenv("GITHUB_TOKEN")
 #define FILE_NAME "nfc_data.csv"
-#define API_URL getenv("API_URL")
+#define API_URL getenv("API_URL") 
 
 struct string {
     char *ptr;
