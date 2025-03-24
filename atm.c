@@ -5,9 +5,9 @@
 #include <json-c/json.h>
 
 #define GIST_ID getenv("GIST_ID")
-#define GITHUB_TOKEN getenv("GITHUB _TOKEN")
+#define GITHUB_TOKEN getenv("GITHUB_TOKEN")
 #define FILE_NAME "nfc_data.csv"
-#define API_URL "https://api.github.com/gists/" GIST_ID
+#define API_URL getenv("API_URL")
 
 struct string {
     char *ptr;
