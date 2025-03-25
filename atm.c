@@ -3,12 +3,12 @@
 #include <string.h>
 #include <curl/curl.h>
 #include <json-c/json.h>
+#include <gtk/gtk.h>
 
-#define GIST_ID getenv("GIST_ID")
-#define GITHUB_TOKEN getenv("GITHUB_TOKEN")
+#define GIST_ID "67941adde61d78e0e041c867a74f0ecc"
+#define GITHUB_TOKEN "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"
 #define FILE_NAME "nfc_data.csv"
-#define API_URL getenv("API_URL") 
-
+#define API_URL "https://api.github.com/gists/67941adde61d78e0e041c867a74f0ecc"
 struct string {
     char *ptr;
     size_t len;
@@ -282,16 +282,189 @@ void process_transaction(char *regno, int pin) {
     }
 }
 
-int main() {
+static GtkWidget *regno_entry, *pin_entry;
+
+static void on_login_clicked(GtkWidget *widget, gpointer data) {
+    const char *regno = gtk_entry_get_text(GTK_ENTRY(regno_entry));
+    const char *pin_str = gtk_entry_get_text(GTK_ENTRY(pin_entry));
+    int pin = atoi(pin_str);
+
+    process_transaction((char *)regno, pin);
+}
+
+// GUI-based "main menu" window
+typedef struct {
     char regno[20];
+    char user_name[50];
     int pin;
+    int balance;
+} UserData;
 
-    printf("==== ATM LOGIN ====\n");
-    printf("Enter Register Number: ");
-    scanf("%s", regno);
-    printf("Enter PIN: ");
-    scanf("%d", &pin);
+static void update_balance_label(GtkWidget *label, UserData *ud) {
+    char msg[100];
+    snprintf(msg, sizeof(msg), "Balance: %d", ud->balance);
+    gtk_label_set_text(GTK_LABEL(label), msg);
+}
 
-    process_transaction(regno, pin);
+static void do_withdraw(GtkWidget *entry, gpointer data) {
+    UserData *ud = (UserData *)data;
+    int amount = atoi(gtk_entry_get_text(GTK_ENTRY(entry)));
+    if (amount > ud->balance) {
+        // Optional: show a warning dialog
+    } else {
+        ud->balance -= amount;
+        reload_data_and_update(ud->regno, ud->pin, ud->user_name, ud->balance);
+    }
+}
+
+static void do_deposit(GtkWidget *entry, gpointer data) {
+    UserData *ud = (UserData *)data;
+    int amount = atoi(gtk_entry_get_text(GTK_ENTRY(entry)));
+    ud->balance += amount;
+    reload_data_and_update(ud->regno, ud->pin, ud->user_name, ud->balance);
+}
+
+static void do_change_name(GtkWidget *entry, gpointer data) {
+    UserData *ud = (UserData *)data;
+    strncpy(ud->user_name, gtk_entry_get_text(GTK_ENTRY(entry)), sizeof(ud->user_name) - 1);
+    reload_data_and_update(ud->regno, ud->pin, ud->user_name, ud->balance);
+}
+
+static void do_change_pin(GtkWidget *entry, gpointer data) {
+    UserData *ud = (UserData *)data;
+    ud->pin = atoi(gtk_entry_get_text(GTK_ENTRY(entry)));
+    reload_data_and_update(ud->regno, ud->pin, ud->user_name, ud->balance);
+}
+
+// Example UI menu
+static void open_main_menu(UserData *ud) {
+    GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    gtk_window_set_title(GTK_WINDOW(window), "ATM Main Menu");
+    gtk_window_set_default_size(GTK_WINDOW(window), 300, 200);
+
+    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+    gtk_container_add(GTK_CONTAINER(window), vbox);
+
+    // Show user name
+    char welcome[100];
+    snprintf(welcome, sizeof(welcome), "Welcome, %s!", ud->user_name);
+    GtkWidget *welcome_label = gtk_label_new(welcome);
+    gtk_box_pack_start(GTK_BOX(vbox), welcome_label, FALSE, FALSE, 0);
+
+    // Show balance label
+    GtkWidget *balance_label = gtk_label_new("");
+    gtk_box_pack_start(GTK_BOX(vbox), balance_label, FALSE, FALSE, 0);
+    update_balance_label(balance_label, ud);
+
+    // Withdraw button
+    GtkWidget *withdraw_button = gtk_button_new_with_label("Withdraw");
+    gtk_box_pack_start(GTK_BOX(vbox), withdraw_button, FALSE, FALSE, 0);
+    g_signal_connect_swapped(withdraw_button, "clicked", G_CALLBACK(do_withdraw), gtk_entry_new());
+
+    // Deposit button
+    GtkWidget *deposit_button = gtk_button_new_with_label("Deposit");
+    gtk_box_pack_start(GTK_BOX(vbox), deposit_button, FALSE, FALSE, 0);
+    g_signal_connect_swapped(deposit_button, "clicked", G_CALLBACK(do_deposit), gtk_entry_new());
+
+    // Change name
+    GtkWidget *change_name_button = gtk_button_new_with_label("Change Name");
+    gtk_box_pack_start(GTK_BOX(vbox), change_name_button, FALSE, FALSE, 0);
+    g_signal_connect_swapped(change_name_button, "clicked", G_CALLBACK(do_change_name), gtk_entry_new());
+
+    // Change PIN
+    GtkWidget *change_pin_button = gtk_button_new_with_label("Change PIN");
+    gtk_box_pack_start(GTK_BOX(vbox), change_pin_button, FALSE, FALSE, 0);
+    g_signal_connect_swapped(change_pin_button, "clicked", G_CALLBACK(do_change_pin), gtk_entry_new());
+
+    // Exit button
+    GtkWidget *exit_button = gtk_button_new_with_label("Exit");
+    gtk_box_pack_start(GTK_BOX(vbox), exit_button, FALSE, FALSE, 0);
+    g_signal_connect(exit_button, "clicked", G_CALLBACK(gtk_main_quit), NULL);
+
+    g_signal_connect(window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
+    gtk_widget_show_all(window);
+}
+
+// GUI "process_transaction" that avoids terminal I/O
+static void process_transaction_gui(const char *regno, int pin) {
+    char *data = fetch_gist_content();
+    if (!data) return;
+
+    UserData ud;
+    strncpy(ud.regno, regno, sizeof(ud.regno) - 1);
+    ud.pin = pin;
+    ud.balance = 0;
+    memset(ud.user_name, 0, sizeof(ud.user_name));
+
+    // Quick search for user data
+    int found = 0;
+    char *line = strtok(data, "\n");
+    while (line) {
+        char file_regno[20], file_name[50];
+        int file_pin, file_balance;
+        sscanf(line, "%[^,],%d,%[^,],%d", file_regno, &file_pin, file_name, &file_balance);
+        if (strcmp(file_regno, regno) == 0) {
+            found = 1;
+            if (file_pin != pin) {
+                // Optional: show message dialog about incorrect PIN
+                free(data);
+                return;
+            }
+            strcpy(ud.user_name, file_name);
+            ud.balance = file_balance;
+            break;
+        }
+        line = strtok(NULL, "\n");
+    }
+    free(data);
+
+    if (!found) {
+        // Optional: show message dialog about not found
+        return;
+    }
+
+    open_main_menu(&ud);
+}
+
+// The existing callback now calls the GUI version
+static void on_login_clicked_gui(GtkWidget *widget, gpointer data) {
+    const char *regno = gtk_entry_get_text(GTK_ENTRY(regno_entry));
+    const char *pin_str = gtk_entry_get_text(GTK_ENTRY(pin_entry));
+    int pin = atoi(pin_str);
+    process_transaction_gui(regno, pin); // calls the GUI flow
+}
+
+int main(int argc, char *argv[]) {
+    gtk_init(&argc, &argv);
+
+    GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    gtk_window_set_title(GTK_WINDOW(window), "ATM Login");
+    gtk_window_set_default_size(GTK_WINDOW(window), 300, 200);
+
+    g_signal_connect(window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
+
+    GtkWidget *grid = gtk_grid_new();
+    gtk_container_add(GTK_CONTAINER(window), grid);
+
+    GtkWidget *regno_label = gtk_label_new("Register Number:");
+    GtkWidget *pin_label = gtk_label_new("PIN:");
+
+    regno_entry = gtk_entry_new();
+    pin_entry = gtk_entry_new();
+    gtk_entry_set_visibility(GTK_ENTRY(pin_entry), FALSE);
+
+    GtkWidget *login_button = gtk_button_new_with_label("Login");
+    // Use the renamed function:
+    g_signal_connect(login_button, "clicked", G_CALLBACK(on_login_clicked_gui), NULL);
+
+    gtk_grid_attach(GTK_GRID(grid), regno_label, 0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), regno_entry, 1, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), pin_label, 0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), pin_entry, 1, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), login_button, 0, 2, 2, 1);
+
+    gtk_widget_show_all(window);
+    gtk_main();
+
     return 0;
 }
