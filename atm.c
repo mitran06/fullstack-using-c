@@ -10,7 +10,7 @@
 #define GIST_ID ""
 #define GITHUB_TOKEN ""
 #define FILE_NAME ""
-#define API_URL "https://api.github.com/gists/" GIST_ID
+#define API_URL ""
 
 struct string {
     char *ptr;
