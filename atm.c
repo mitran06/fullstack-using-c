@@ -1,14 +1,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <curl/curl.h>
 #include <json-c/json.h>
-#include <gtk/gtk.h>
+#include <ncurses.h>
+#include <locale.h>
 
 #define GIST_ID "67941adde61d78e0e041c867a74f0ecc"
 #define GITHUB_TOKEN "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"
 #define FILE_NAME "nfc_data.csv"
 #define API_URL "https://api.github.com/gists/67941adde61d78e0e041c867a74f0ecc"
+
 struct string {
     char *ptr;
     size_t len;
@@ -138,8 +141,6 @@ void update_gist_content(const char *updated_content) {
     CURLcode res = curl_easy_perform(curl);
     if (res != CURLE_OK) {
         fprintf(stderr, "Failed to update gist: %s\n", curl_easy_strerror(res));
-    } else {
-        printf("Gist updated successfully\n");
     }
 
     curl_easy_cleanup(curl);
@@ -178,293 +179,356 @@ void reload_data_and_update(const char *regno, int pin, const char *user_name, i
     free(temp_data);
 }
 
+static int read_line_with_esc(char *buffer, int buffer_size) {
+    memset(buffer, 0, buffer_size);
+    int idx = 0;
+    while (1) {
+        int c = getch();
+        if (c == 27) { // ESC
+            buffer[0] = '\0';
+            return 1; 
+        } else if (c == '\n') {
+            buffer[idx] = '\0';
+            return 0; 
+        } else if (c == KEY_BACKSPACE || c == 127) {
+            if (idx > 0) {
+                idx--;
+                buffer[idx] = '\0';
+                // visual remove
+                int y, x;
+                getyx(stdscr, y, x);
+                if (x > 0) {
+                    mvaddch(y, x - 1, ' ');
+                    move(y, x - 1);
+                }
+            }
+        } else if (isprint(c) && idx < buffer_size - 1) {
+            buffer[idx++] = (char)c;
+            addch(c);
+        }
+        refresh();
+    }
+}
+
+// REMEMBER 1 if esc
+static int read_line_with_esc_in_window(WINDOW *win, char *buffer, int buffer_size) {
+    memset(buffer, 0, buffer_size);
+    int idx = 0;
+    while (1) {
+        int c = wgetch(win);
+        if (c == 27) { // ESC
+            buffer[0] = '\0';
+            return 1;
+        } else if (c == '\n') {
+            buffer[idx] = '\0';
+            return 0;
+        } else if (c == KEY_BACKSPACE || c == 127) {
+            if (idx > 0) {
+                idx--;
+                buffer[idx] = '\0';
+                // visually remove
+                int y, x;
+                getyx(win, y, x);
+                if (x > 0) {
+                    mvwaddch(win, y, x - 1, ' ');
+                    wmove(win, y, x - 1);
+                }
+            }
+        } else if (isprint(c) && idx < buffer_size - 1) {
+            buffer[idx++] = (char)c;
+            waddch(win, c);
+        }
+        wrefresh(win);
+    }
+}
+
 void process_transaction(char *regno, int pin) {
     char *data = fetch_gist_content();
-    if (data == NULL) {
+    if (!data) {
         fprintf(stderr, "Failed to retrieve data\n");
         return;
     }
 
-    char new_data[8192] = "";
     int found = 0, balance = 0;
     char user_name[50];
-
+    char new_data[8192] = "";
     char *line = strtok(data, "\n");
+
     while (line) {
         char file_regno[20], file_name[50];
-        int file_pin, file_balance;
+        int  file_pin, file_balance;
         sscanf(line, "%[^,],%d,%[^,],%d", file_regno, &file_pin, file_name, &file_balance);
-
         if (strcmp(file_regno, regno) == 0) {
             found = 1;
             if (file_pin != pin) {
                 printf("Incorrect PIN.\n");
+                free(data);
                 return;
             }
             strcpy(user_name, file_name);
             balance = file_balance;
         }
-
         char temp[100];
         snprintf(temp, sizeof(temp), "%s,%d,%s,%d\n", file_regno, file_pin, file_name, file_balance);
         strcat(new_data, temp);
         line = strtok(NULL, "\n");
     }
 
+    free(data);
     if (!found) {
         printf("User not found!\n");
         return;
     }
 
-    int choice, amount;
+    // main menu LOOP
     while (1) {
-        printf("\nWelcome to Bank of Amrita, %s!\n", user_name);
-        printf("1. Check Balance\n2. Withdraw\n3. Deposit\n4. Exit\n5. Account Settings\nEnter your choice: ");
-        scanf("%d", &choice);
+        clear();
+        const char *ascii_art[] = {
+            "██████╗  █████╗ ███╗   ██╗██╗  ██╗         ██████╗ ███████╗         █████╗ ███╗   ███╗██████╗ ██╗████████╗ █████╗ ",
+            "██╔══██╗██╔══██╗████╗  ██║██║ ██╔╝        ██╔═══██╗██╔════╝        ██╔══██╗████╗ ████║██╔══██╗██║╚══██╔══╝██╔══██╗",
+            "██████╔╝███████║██╔██╗ ██║█████╔╝         ██║   ██║█████╗          ███████║██╔████╔██║██████╔╝██║   ██║   ███████║",
+            "██╔══██╗██╔══██║██║╚██╗██║██╔═██╗         ██║   ██║██╔══╝          ██╔══██║██║╚██╔╝██║██╔══██╗██║   ██║   ██╔══██║",
+            "██████╔╝██║  ██║██║ ╚████║██║  ██╗        ╚██████╔╝██║             ██║  ██║██║ ╚═╝ ██║██║  ██║██║   ██║   ██║  ██║",
+            "╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝         ╚═════╝ ╚═╝             ╚═╝  ╚═╝╚═╝     ╚═╝╚═╝  ╚═╝╚═╝   ╚═╝   ╚═╝  ╚═╝"
+        };
+        int ascii_lines = sizeof(ascii_art) / sizeof(ascii_art[0]);
+        // APPROXIMATE FIX THIS SHIT!!
+        int ascii_width = 108; 
+        // topline
+        int ascii_start_y = (LINES - ascii_lines) / 4; // shift up
+        int ascii_start_x = (COLS - ascii_width) / 2;
 
-        switch (choice) {
-            case 1:
-                printf("Your balance: %d\n", balance);
+        for (int i = 0; i < ascii_lines; i++) {
+            mvprintw(ascii_start_y + i, ascii_start_x, "%s", ascii_art[i]);
+        }
+        // refresh
+        refresh();
+
+        // box
+        int menu_h = 15, menu_w = 60;
+        int starty = ascii_start_y + ascii_lines + 2; // lines below the art
+        int startx = (COLS - menu_w) / 2;
+        WINDOW *menuwin = newwin(menu_h, menu_w, starty, startx);
+        keypad(menuwin, TRUE);
+        box(menuwin, 0, 0);
+
+        mvwprintw(menuwin, 0, menu_w - 12, "ESC to Exit");
+        mvwprintw(menuwin, 2, 2, "Welcome to Bank of Amrita, %s!", user_name);
+        mvwprintw(menuwin, 4, 2, "Use ARROW KEYS to navigate, ENTER to select:");
+        mvwprintw(menuwin, 6, 4, "1. Check Balance");
+        mvwprintw(menuwin, 7, 4, "2. Withdraw");
+        mvwprintw(menuwin, 8, 4, "3. Deposit");
+        mvwprintw(menuwin, 9, 4, "4. Exit");
+        mvwprintw(menuwin, 10, 4, "5. Account Settings");
+        wrefresh(menuwin);
+
+        int choice_idx = 0;
+        int ch;
+        while (1) {
+            for (int i = 0; i < 5; i++) {
+                if (i == choice_idx) wattron(menuwin, A_REVERSE);
+                mvwprintw(menuwin, 6 + i, 4, "%d. ", i + 1);
+                switch (i) {
+                    case 0: wprintw(menuwin, "Check Balance");    break;
+                    case 1: wprintw(menuwin, "Withdraw");         break;
+                    case 2: wprintw(menuwin, "Deposit");          break;
+                    case 3: wprintw(menuwin, "Exit");             break;
+                    case 4: wprintw(menuwin, "Account Settings"); break;
+                }
+                wattroff(menuwin, A_REVERSE);
+            }
+            wrefresh(menuwin);
+
+            ch = wgetch(menuwin);
+            if (ch == KEY_UP) {
+                choice_idx = (choice_idx == 0) ? 4 : choice_idx - 1;
+            } else if (ch == KEY_DOWN) {
+                choice_idx = (choice_idx == 4) ? 0 : choice_idx + 1;
+            } else if (ch == 27) {
+                // esc on main menu
+                delwin(menuwin);
+                clear();
+                return;
+            } else if (ch == '\n') {
                 break;
-            case 2:
-                printf("Enter amount to withdraw: ");
-                scanf("%d", &amount);
+            }
+        }
+        delwin(menuwin);
+        refresh();
+
+        // clear screen
+        // create box
+        int sub_h = 15, sub_w = 60;  // Same size if desired
+        int sy = (LINES - sub_h) / 2;
+        int sx = (COLS - sub_w) / 2;
+        WINDOW *subwin = newwin(menu_h, menu_w, starty, startx);
+        keypad(subwin, TRUE);
+        box(subwin, 0, 0);
+        mvwprintw(subwin, 0, sub_w - 15, "ESC to Go Back");
+        wrefresh(subwin);
+
+        int choice = choice_idx + 1;
+        switch (choice) {
+            case 1: // check balance
+                mvwprintw(subwin, 2, 2, "Your balance: %d", balance);
+                wrefresh(subwin);
+                while ((ch = wgetch(subwin)) != 27) { }
+                delwin(subwin);
+                break;
+
+            case 2: { // withdraw
+                mvwprintw(subwin, 2, 2, "Enter amount to withdraw: ");
+                wmove(subwin, 3, 2);
+                wrefresh(subwin);
+                echo();
+                char amt_str[12];
+                noecho();
+                // esc to exit
+                if (read_line_with_esc_in_window(subwin, amt_str, sizeof(amt_str))) {
+                    delwin(subwin);
+                    break;
+                }
+                int amount = atoi(amt_str);
                 if (amount > balance) {
-                    printf("Insufficient balance!\n");
+                    mvwprintw(subwin, 5, 2, "Insufficient balance!");
                 } else {
                     balance -= amount;
-                    printf("Withdrawal successful! New balance: %d\n", balance);
+                    mvwprintw(subwin, 5, 2, "Withdrawal successful! New balance: %d", balance);
+                    reload_data_and_update(regno, pin, user_name, balance);
                 }
+                wrefresh(subwin);
+                while ((ch = wgetch(subwin)) != 27) { }
+                delwin(subwin);
                 break;
-            case 3:
-                printf("Enter amount to deposit: ");
-                scanf("%d", &amount);
-                balance += amount;
-                printf("Deposit successful! New balance: %d\n", balance);
-                break;
-            case 4:
-                printf("Exiting...\n");
-                free(data);
-                return;
-            case 5:
-                printf("ACCOUNT SETTINGS:\n");
-                printf("1. Change Name\n");
-                printf("2. Change PIN\n");
-                printf("Enter your choice: ");
-
-                int settingsChoice;
-                scanf("%d", &settingsChoice);
-
-                if (settingsChoice == 1) {
-                    char new_name[50];
-                    printf("Enter your new name: ");
-                    scanf(" %[^\n]", new_name);  // reads until newline
-                    strcpy(user_name, new_name);
-                    printf("Name changed to: %s\n", user_name);
-                } else if (settingsChoice == 2) {
-                    int new_pin;
-                    printf("Enter your new PIN: ");
-                    scanf("%d", &new_pin);
-                    pin = new_pin;
-                    printf("PIN changed to: %d\n", pin);
-                } else {
-                    printf("Invalid option!\n");
-                }
-
-                // append instead of overwriting
-                reload_data_and_update(regno, pin, user_name, balance);
-                break;
-            default:
-                printf("Invalid choice! Try again.\n");
-        }
-
-        reload_data_and_update(regno, pin, user_name, balance);
-    }
-}
-
-static GtkWidget *regno_entry, *pin_entry;
-
-static void on_login_clicked(GtkWidget *widget, gpointer data) {
-    const char *regno = gtk_entry_get_text(GTK_ENTRY(regno_entry));
-    const char *pin_str = gtk_entry_get_text(GTK_ENTRY(pin_entry));
-    int pin = atoi(pin_str);
-
-    process_transaction((char *)regno, pin);
-}
-
-// GUI-based "main menu" window
-typedef struct {
-    char regno[20];
-    char user_name[50];
-    int pin;
-    int balance;
-} UserData;
-
-static void update_balance_label(GtkWidget *label, UserData *ud) {
-    char msg[100];
-    snprintf(msg, sizeof(msg), "Balance: %d", ud->balance);
-    gtk_label_set_text(GTK_LABEL(label), msg);
-}
-
-static void do_withdraw(GtkWidget *entry, gpointer data) {
-    UserData *ud = (UserData *)data;
-    int amount = atoi(gtk_entry_get_text(GTK_ENTRY(entry)));
-    if (amount > ud->balance) {
-        // Optional: show a warning dialog
-    } else {
-        ud->balance -= amount;
-        reload_data_and_update(ud->regno, ud->pin, ud->user_name, ud->balance);
-    }
-}
-
-static void do_deposit(GtkWidget *entry, gpointer data) {
-    UserData *ud = (UserData *)data;
-    int amount = atoi(gtk_entry_get_text(GTK_ENTRY(entry)));
-    ud->balance += amount;
-    reload_data_and_update(ud->regno, ud->pin, ud->user_name, ud->balance);
-}
-
-static void do_change_name(GtkWidget *entry, gpointer data) {
-    UserData *ud = (UserData *)data;
-    strncpy(ud->user_name, gtk_entry_get_text(GTK_ENTRY(entry)), sizeof(ud->user_name) - 1);
-    reload_data_and_update(ud->regno, ud->pin, ud->user_name, ud->balance);
-}
-
-static void do_change_pin(GtkWidget *entry, gpointer data) {
-    UserData *ud = (UserData *)data;
-    ud->pin = atoi(gtk_entry_get_text(GTK_ENTRY(entry)));
-    reload_data_and_update(ud->regno, ud->pin, ud->user_name, ud->balance);
-}
-
-// Example UI menu
-static void open_main_menu(UserData *ud) {
-    GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-    gtk_window_set_title(GTK_WINDOW(window), "ATM Main Menu");
-    gtk_window_set_default_size(GTK_WINDOW(window), 300, 200);
-
-    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
-    gtk_container_add(GTK_CONTAINER(window), vbox);
-
-    // Show user name
-    char welcome[100];
-    snprintf(welcome, sizeof(welcome), "Welcome, %s!", ud->user_name);
-    GtkWidget *welcome_label = gtk_label_new(welcome);
-    gtk_box_pack_start(GTK_BOX(vbox), welcome_label, FALSE, FALSE, 0);
-
-    // Show balance label
-    GtkWidget *balance_label = gtk_label_new("");
-    gtk_box_pack_start(GTK_BOX(vbox), balance_label, FALSE, FALSE, 0);
-    update_balance_label(balance_label, ud);
-
-    // Withdraw button
-    GtkWidget *withdraw_button = gtk_button_new_with_label("Withdraw");
-    gtk_box_pack_start(GTK_BOX(vbox), withdraw_button, FALSE, FALSE, 0);
-    g_signal_connect_swapped(withdraw_button, "clicked", G_CALLBACK(do_withdraw), gtk_entry_new());
-
-    // Deposit button
-    GtkWidget *deposit_button = gtk_button_new_with_label("Deposit");
-    gtk_box_pack_start(GTK_BOX(vbox), deposit_button, FALSE, FALSE, 0);
-    g_signal_connect_swapped(deposit_button, "clicked", G_CALLBACK(do_deposit), gtk_entry_new());
-
-    // Change name
-    GtkWidget *change_name_button = gtk_button_new_with_label("Change Name");
-    gtk_box_pack_start(GTK_BOX(vbox), change_name_button, FALSE, FALSE, 0);
-    g_signal_connect_swapped(change_name_button, "clicked", G_CALLBACK(do_change_name), gtk_entry_new());
-
-    // Change PIN
-    GtkWidget *change_pin_button = gtk_button_new_with_label("Change PIN");
-    gtk_box_pack_start(GTK_BOX(vbox), change_pin_button, FALSE, FALSE, 0);
-    g_signal_connect_swapped(change_pin_button, "clicked", G_CALLBACK(do_change_pin), gtk_entry_new());
-
-    // Exit button
-    GtkWidget *exit_button = gtk_button_new_with_label("Exit");
-    gtk_box_pack_start(GTK_BOX(vbox), exit_button, FALSE, FALSE, 0);
-    g_signal_connect(exit_button, "clicked", G_CALLBACK(gtk_main_quit), NULL);
-
-    g_signal_connect(window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
-    gtk_widget_show_all(window);
-}
-
-// GUI "process_transaction" that avoids terminal I/O
-static void process_transaction_gui(const char *regno, int pin) {
-    char *data = fetch_gist_content();
-    if (!data) return;
-
-    UserData ud;
-    strncpy(ud.regno, regno, sizeof(ud.regno) - 1);
-    ud.pin = pin;
-    ud.balance = 0;
-    memset(ud.user_name, 0, sizeof(ud.user_name));
-
-    // Quick search for user data
-    int found = 0;
-    char *line = strtok(data, "\n");
-    while (line) {
-        char file_regno[20], file_name[50];
-        int file_pin, file_balance;
-        sscanf(line, "%[^,],%d,%[^,],%d", file_regno, &file_pin, file_name, &file_balance);
-        if (strcmp(file_regno, regno) == 0) {
-            found = 1;
-            if (file_pin != pin) {
-                // Optional: show message dialog about incorrect PIN
-                free(data);
-                return;
             }
-            strcpy(ud.user_name, file_name);
-            ud.balance = file_balance;
-            break;
+
+            case 3: { // deposit
+                mvwprintw(subwin, 2, 2, "Enter amount to deposit: ");
+                wmove(subwin, 3, 2);
+                wrefresh(subwin);
+                echo();
+                char amt_str[12];
+                noecho();
+                if (read_line_with_esc_in_window(subwin, amt_str, sizeof(amt_str))) {
+                    delwin(subwin);
+                    break;
+                }
+                int amount = atoi(amt_str);
+                balance += amount;
+                mvwprintw(subwin, 5, 2, "Deposit successful! New balance: %d", balance);
+                reload_data_and_update(regno, pin, user_name, balance);
+                wrefresh(subwin);
+                while ((ch = wgetch(subwin)) != 27) { }
+                delwin(subwin);
+                break;
+            }
+
+            case 4: // exit
+                delwin(subwin);
+                clear();
+                mvprintw(0, 0, "Exiting...");
+                refresh();
+                return;
+
+            case 5: { // account Settings
+                mvwprintw(subwin, 2, 2, "1. Change Name");
+                mvwprintw(subwin, 3, 2, "2. Change PIN");
+                mvwprintw(subwin, 5, 2, "Choose (ESC to cancel):");
+                wmove(subwin, 5, 27);
+                wrefresh(subwin);
+                echo();
+                char settings_choice_str[3];
+                noecho();
+                if (read_line_with_esc_in_window(subwin, settings_choice_str, sizeof(settings_choice_str))) {
+                    delwin(subwin);
+                    break;
+                }
+                int settingsChoice = atoi(settings_choice_str);
+                if (settingsChoice == 1) {
+                    mvwprintw(subwin, 7, 2, "Enter your new name:");
+                    wmove(subwin, 8, 2);
+                    wrefresh(subwin);
+                    echo();
+                    char new_name[50];
+                    noecho();
+                    if (!read_line_with_esc_in_window(subwin, new_name, sizeof(new_name))) {
+                        strcpy(user_name, new_name);
+                        mvwprintw(subwin, 9, 2, "Name changed to: %s", user_name);
+                        reload_data_and_update(regno, pin, user_name, balance);
+                    }
+                } else if (settingsChoice == 2) {
+                    mvwprintw(subwin, 7, 2, "Enter your new PIN:");
+                    wmove(subwin, 8, 2);
+                    wrefresh(subwin);
+                    echo();
+                    char new_pin_str[10];
+                    noecho();
+                    if (!read_line_with_esc_in_window(subwin, new_pin_str, sizeof(new_pin_str))) {
+                        pin = atoi(new_pin_str);
+                        mvwprintw(subwin, 9, 2, "PIN changed to: %d", pin);
+                        reload_data_and_update(regno, pin, user_name, balance);
+                    }
+                } else {
+                    mvwprintw(subwin, 7, 2, "Invalid option!");
+                }
+                wrefresh(subwin);
+                while ((ch = wgetch(subwin)) != 27) { }
+                delwin(subwin);
+                break;
+            }
+
+            default:
+                delwin(subwin);
+                break;
         }
-        line = strtok(NULL, "\n");
     }
-    free(data);
-
-    if (!found) {
-        // Optional: show message dialog about not found
-        return;
-    }
-
-    open_main_menu(&ud);
 }
 
-// The existing callback now calls the GUI version
-static void on_login_clicked_gui(GtkWidget *widget, gpointer data) {
-    const char *regno = gtk_entry_get_text(GTK_ENTRY(regno_entry));
-    const char *pin_str = gtk_entry_get_text(GTK_ENTRY(pin_entry));
+int main() {
+    setlocale(LC_ALL, "");
+    // init
+    initscr();
+    cbreak();
+    noecho();
+    keypad(stdscr, TRUE);
+
+    // centre window
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+
+    int win_height = 10;
+    int win_width = 40;
+    int starty = (max_y - win_height) / 2;
+    int startx = (max_x - win_width) / 2;
+    WINDOW *loginwin = newwin(win_height, win_width, starty, startx);
+    box(loginwin, 0, 0);
+
+    // login
+    mvwprintw(loginwin, 1, (win_width - 11) / 2, " LOGIN ");
+    mvwprintw(loginwin, 3, 2, "Register No: ");
+    mvwprintw(loginwin, 5, 2, "PIN: ");
+    wmove(loginwin, 3, 15);
+    wrefresh(loginwin);
+
+    // regno
+    char regno[20];
+    wgetnstr(loginwin, regno, sizeof(regno) - 1);
+
+    // move to pin
+    wmove(loginwin, 5, 7);
+    wrefresh(loginwin);
+
+    // pin
+    char pin_str[10];
+    wgetnstr(loginwin, pin_str, sizeof(pin_str) - 1);
     int pin = atoi(pin_str);
-    process_transaction_gui(regno, pin); // calls the GUI flow
-}
 
-int main(int argc, char *argv[]) {
-    gtk_init(&argc, &argv);
+    delwin(loginwin);
+    clear();
+    refresh();
 
-    GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-    gtk_window_set_title(GTK_WINDOW(window), "ATM Login");
-    gtk_window_set_default_size(GTK_WINDOW(window), 300, 200);
+    process_transaction(regno, pin);
 
-    g_signal_connect(window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
-
-    GtkWidget *grid = gtk_grid_new();
-    gtk_container_add(GTK_CONTAINER(window), grid);
-
-    GtkWidget *regno_label = gtk_label_new("Register Number:");
-    GtkWidget *pin_label = gtk_label_new("PIN:");
-
-    regno_entry = gtk_entry_new();
-    pin_entry = gtk_entry_new();
-    gtk_entry_set_visibility(GTK_ENTRY(pin_entry), FALSE);
-
-    GtkWidget *login_button = gtk_button_new_with_label("Login");
-    // Use the renamed function:
-    g_signal_connect(login_button, "clicked", G_CALLBACK(on_login_clicked_gui), NULL);
-
-    gtk_grid_attach(GTK_GRID(grid), regno_label, 0, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), regno_entry, 1, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), pin_label, 0, 1, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), pin_entry, 1, 1, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), login_button, 0, 2, 2, 1);
-
-    gtk_widget_show_all(window);
-    gtk_main();
-
+    endwin();
     return 0;
 }
