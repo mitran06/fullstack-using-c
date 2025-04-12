@@ -7,10 +7,10 @@
 #include <ncurses.h>
 #include <locale.h>
 
-#define GIST_ID "67941adde61d78e0e041c867a74f0ecc"
-#define GITHUB_TOKEN "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"
-#define FILE_NAME "nfc_data.csv"
-#define API_URL "https://api.github.com/gists/67941adde61d78e0e041c867a74f0ecc"
+#define GIST_ID ""
+#define GITHUB_TOKEN ""
+#define FILE_NAME ""
+#define API_URL "https://api.github.com/gists/" GIST_ID
 
 struct string {
     char *ptr;
