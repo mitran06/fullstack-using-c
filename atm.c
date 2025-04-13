@@ -7,10 +7,10 @@
 #include <ncurses.h>
 #include <locale.h>
 
-#define GIST_ID getenv("GIST_ID")
-#define GITHUB_TOKEN getenv("GITHUB_TOKEN")
+#define GIST_ID "67941adde61d78e0e041c867a74f0ecc"
+#define GITHUB_TOKEN "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"
 #define FILE_NAME "nfc_data.csv"
-#define API_URL getenv("API_URL") 
+#define API_URL "https://api.github.com/gists/" GIST_ID
 
 
 struct string {
@@ -431,53 +431,79 @@ void process_transaction(char *regno, int pin) {
                 refresh();
                 return;
 
-            case 5: { // account Settings
-                mvwprintw(subwin, 2, 2, "1. Change Name");
-                mvwprintw(subwin, 3, 2, "2. Change PIN");
-                mvwprintw(subwin, 5, 2, "Choose (ESC to cancel):");
-                wmove(subwin, 5, 27);
-                wrefresh(subwin);
-                echo();
-                char settings_choice_str[3];
-                noecho();
-                if (read_line_with_esc_in_window(subwin, settings_choice_str, sizeof(settings_choice_str))) {
-                    delwin(subwin);
-                    break;
-                }
-                int settingsChoice = atoi(settings_choice_str);
-                if (settingsChoice == 1) {
-                    mvwprintw(subwin, 7, 2, "Enter your new name:");
-                    wmove(subwin, 8, 2);
-                    wrefresh(subwin);
-                    echo();
-                    char new_name[50];
-                    noecho();
-                    if (!read_line_with_esc_in_window(subwin, new_name, sizeof(new_name))) {
-                        strcpy(user_name, new_name);
-                        mvwprintw(subwin, 9, 2, "Name changed to: %s", user_name);
-                        reload_data_and_update(regno, pin, user_name, balance);
+            case 5: { // account settings
+                int settings_idx = 0;
+                int settings_opts_count = 2;
+                const char *settings_opts[] = {"Change Name", "Change PIN"};
+                while (1) {
+                    // Draw settings menu
+                    for (int i = 0; i < settings_opts_count; i++) {
+                        if (i == settings_idx) wattron(subwin, A_REVERSE);
+                        mvwprintw(subwin, 2 + i, 2, "%d. %s", i + 1, settings_opts[i]);
+                        wattroff(subwin, A_REVERSE);
                     }
-                } else if (settingsChoice == 2) {
-                    mvwprintw(subwin, 7, 2, "Enter your new PIN:");
-                    wmove(subwin, 8, 2);
                     wrefresh(subwin);
-                    echo();
-                    char new_pin_str[10];
-                    noecho();
-                    if (!read_line_with_esc_in_window(subwin, new_pin_str, sizeof(new_pin_str))) {
-                        pin = atoi(new_pin_str);
-                        mvwprintw(subwin, 9, 2, "PIN changed to: %d", pin);
-                        reload_data_and_update(regno, pin, user_name, balance);
+
+                    int c_input = wgetch(subwin);
+                    if (c_input == KEY_UP) {
+                        settings_idx = (settings_idx == 0) ? settings_opts_count - 1 : settings_idx - 1;
+                    } else if (c_input == KEY_DOWN) {
+                        settings_idx = (settings_idx == settings_opts_count - 1) ? 0 : settings_idx + 1;
+                    } else if (c_input == 27) { // ESC
+                        delwin(subwin);
+                        break;
+                    } else if (c_input == '\n') {
+                        // Clear the subwin before entering subsubmenu
+                        wclear(subwin);
+                        wrefresh(subwin);
+
+                        int subsub_h = sub_h;
+                        int subsub_w = sub_w;
+                        WINDOW *subsubwin = derwin(subwin, subsub_h, subsub_w, 0, 0);
+
+                        box(subsubwin, 0, 0);
+                        mvwprintw(subsubwin, 0, subsub_w - 15, "ESC to Go Back");
+                        wrefresh(subsubwin);
+
+                        if (settings_idx == 0) { // Change Name
+                            mvwprintw(subsubwin, 2, 2, "Change Name");
+                            mvwprintw(subsubwin, 3, 2, "Enter your new name:");
+                            wmove(subsubwin, 4, 2);
+                            wrefresh(subsubwin);
+                            echo();
+                            char new_name[50];
+                            noecho();
+                            if (!read_line_with_esc_in_window(subsubwin, new_name, sizeof(new_name))) {
+                                strcpy(user_name, new_name);
+                                mvwprintw(subsubwin, 6, 2, "Name updated to: %s", user_name);
+                                reload_data_and_update(regno, pin, user_name, balance);
+                            }
+                        } else if (settings_idx == 1) { // Change PIN
+                            mvwprintw(subsubwin, 2, 2, "Change PIN");
+                            mvwprintw(subsubwin, 3, 2, "Enter your new PIN:");
+                            wmove(subsubwin, 4, 2);
+                            wrefresh(subsubwin);
+                            echo();
+                            char new_pin_str[10];
+                            noecho();
+                            if (!read_line_with_esc_in_window(subsubwin, new_pin_str, sizeof(new_pin_str))) {
+                                pin = atoi(new_pin_str);
+                                mvwprintw(subsubwin, 6, 2, "PIN updated to: %d", pin);
+                                reload_data_and_update(regno, pin, user_name, balance);
+                            }
+                        }
+                        wrefresh(subsubwin);
+
+                        while ((c_input = wgetch(subsubwin)) != 27) {}
+                        werase(subsubwin);
+                        wborder(subsubwin, ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ');
+                        wrefresh(subsubwin);
+                        delwin(subsubwin);
+                        break;
                     }
-                } else {
-                    mvwprintw(subwin, 7, 2, "Invalid option!");
                 }
-                wrefresh(subwin);
-                while ((ch = wgetch(subwin)) != 27) { }
-                delwin(subwin);
                 break;
             }
-
             default:
                 delwin(subwin);
                 break;
@@ -531,4 +557,4 @@ int main() {
     process_transaction(regno, pin);
 
     endwin();
-;
+}
