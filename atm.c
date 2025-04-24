@@ -6,9 +6,10 @@
 #include <json-c/json.h>
 #include <ncurses.h>
 #include <locale.h>
+#include <stdbool.h>
 
-#define GIST_ID "67941adde61d78e0e041c867a74f0ecc"
-#define GITHUB_TOKEN "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"
+#define GIST_ID ""
+#define GITHUB_TOKEN ""
 #define FILE_NAME "nfc_data.csv"
 #define API_URL "https://api.github.com/gists/" GIST_ID
 
@@ -108,6 +109,8 @@ static void escape_string(const char *src, char *dst, size_t dst_size) {
 
 // FUNCTION TO IGNORE JSON DUMP
 static size_t discard_response(void *ptr, size_t size, size_t nmemb, void *userdata) {
+    (void)ptr;
+    (void)userdata;
     return size * nmemb; 
 }
 
@@ -180,36 +183,36 @@ void reload_data_and_update(const char *regno, int pin, const char *user_name, i
     free(temp_data);
 }
 
-static int read_line_with_esc(char *buffer, int buffer_size) {
-    memset(buffer, 0, buffer_size);
-    int idx = 0;
-    while (1) {
-        int c = getch();
-        if (c == 27) { // ESC
-            buffer[0] = '\0';
-            return 1; 
-        } else if (c == '\n') {
-            buffer[idx] = '\0';
-            return 0; 
-        } else if (c == KEY_BACKSPACE || c == 127) {
-            if (idx > 0) {
-                idx--;
-                buffer[idx] = '\0';
-                // visual remove
-                int y, x;
-                getyx(stdscr, y, x);
-                if (x > 0) {
-                    mvaddch(y, x - 1, ' ');
-                    move(y, x - 1);
-                }
-            }
-        } else if (isprint(c) && idx < buffer_size - 1) {
-            buffer[idx++] = (char)c;
-            addch(c);
-        }
-        refresh();
-    }
-}
+// static int read_line_with_esc(char *buffer, int buffer_size) {
+//     memset(buffer, 0, buffer_size);
+//     int idx = 0;
+//     while (1) {
+//         int c = getch();
+//         if (c == 27) { // ESC
+//             buffer[0] = '\0';
+//             return 1; 
+//         } else if (c == '\n') {
+//             buffer[idx] = '\0';
+//             return 0; 
+//         } else if (c == KEY_BACKSPACE || c == 127) {
+//             if (idx > 0) {
+//                 idx--;
+//                 buffer[idx] = '\0';
+//                 // visual remove
+//                 int y, x;
+//                 getyx(stdscr, y, x);
+//                 if (x > 0) {
+//                     mvaddch(y, x - 1, ' ');
+//                     move(y, x - 1);
+//                 }
+//             }
+//         } else if (isprint(c) && idx < buffer_size - 1) {
+//             buffer[idx++] = (char)c;
+//             addch(c);
+//         }
+//         refresh();
+//     }
+// }
 
 // REMEMBER 1 if esc
 static int read_line_with_esc_in_window(WINDOW *win, char *buffer, int buffer_size) {
@@ -359,9 +362,9 @@ void process_transaction(char *regno, int pin) {
 
         // clear screen
         // create box
-        int sub_h = 15, sub_w = 60;  // Same size if desired
-        int sy = (LINES - sub_h) / 2;
-        int sx = (COLS - sub_w) / 2;
+        int sub_h = 15, sub_w = 60; 
+        // int sy = (LINES - sub_h) / 2;
+        // int sx = (COLS - sub_w) / 2;
         WINDOW *subwin = newwin(menu_h, menu_w, starty, startx);
         keypad(subwin, TRUE);
         box(subwin, 0, 0);
@@ -384,18 +387,30 @@ void process_transaction(char *regno, int pin) {
                 echo();
                 char amt_str[12];
                 noecho();
-                // esc to exit
                 if (read_line_with_esc_in_window(subwin, amt_str, sizeof(amt_str))) {
                     delwin(subwin);
                     break;
                 }
-                int amount = atoi(amt_str);
-                if (amount > balance) {
-                    mvwprintw(subwin, 5, 2, "Insufficient balance!");
+                bool valid_input = true;
+                for (int i = 0; amt_str[i] != '\0'; i++) {
+                    if (!isdigit((unsigned char)amt_str[i])) {
+                        valid_input = false;
+                        break;
+                    }
+                }
+                if (!valid_input) {
+                    mvwprintw(subwin, 5, 2, "Invalid amount. Only numbers allowed!");
                 } else {
-                    balance -= amount;
-                    mvwprintw(subwin, 5, 2, "Withdrawal successful! New balance: %d", balance);
-                    reload_data_and_update(regno, pin, user_name, balance);
+                    int amount = atoi(amt_str);
+                    if (amount <= 0) {
+                        mvwprintw(subwin, 5, 2, "Invalid amount. Must be positive!");
+                    } else if (amount > balance) {
+                        mvwprintw(subwin, 5, 2, "Insufficient balance!");
+                    } else {
+                        balance -= amount;
+                        mvwprintw(subwin, 5, 2, "Withdrawal successful! New balance: %d", balance);
+                        reload_data_and_update(regno, pin, user_name, balance);
+                    }
                 }
                 wrefresh(subwin);
                 while ((ch = wgetch(subwin)) != 27) { }
@@ -414,10 +429,25 @@ void process_transaction(char *regno, int pin) {
                     delwin(subwin);
                     break;
                 }
-                int amount = atoi(amt_str);
-                balance += amount;
-                mvwprintw(subwin, 5, 2, "Deposit successful! New balance: %d", balance);
-                reload_data_and_update(regno, pin, user_name, balance);
+                bool valid_input = true;
+                for (int i = 0; amt_str[i] != '\0'; i++) {
+                    if (!isdigit((unsigned char)amt_str[i])) {
+                        valid_input = false;
+                        break;
+                    }
+                }
+                if (!valid_input) {
+                    mvwprintw(subwin, 5, 2, "Invalid amount. Only numbers allowed!");
+                } else {
+                    int amount = atoi(amt_str);
+                    if (amount <= 0) {
+                        mvwprintw(subwin, 5, 2, "Invalid amount. Must be positive!");
+                    } else {
+                        balance += amount;
+                        mvwprintw(subwin, 5, 2, "Deposit successful! New balance: %d", balance);
+                        reload_data_and_update(regno, pin, user_name, balance);
+                    }
+                }
                 wrefresh(subwin);
                 while ((ch = wgetch(subwin)) != 27) { }
                 delwin(subwin);
@@ -480,25 +510,41 @@ void process_transaction(char *regno, int pin) {
                             }
                         } else if (settings_idx == 1) { // Change PIN
                             mvwprintw(subsubwin, 2, 2, "Change PIN");
-                            mvwprintw(subsubwin, 3, 2, "Enter your new PIN:");
+                            mvwprintw(subsubwin, 3, 2, "Enter your new PIN (0000-9999):");
                             wmove(subsubwin, 4, 2);
                             wrefresh(subsubwin);
                             echo();
                             char new_pin_str[10];
                             noecho();
                             if (!read_line_with_esc_in_window(subsubwin, new_pin_str, sizeof(new_pin_str))) {
-                                pin = atoi(new_pin_str);
-                                mvwprintw(subsubwin, 6, 2, "PIN updated to: %d", pin);
-                                reload_data_and_update(regno, pin, user_name, balance);
+                                bool valid_pin = true;
+                                int len = strlen(new_pin_str);
+                                for (int i = 0; i < len; i++) {
+                                    if (!isdigit((unsigned char)new_pin_str[i])) {
+                                        valid_pin = false;
+                                        break;
+                                    }
+                                }
+                                if (!valid_pin || len == 0 || len > 4) {
+                                    mvwprintw(subsubwin, 6, 2, "Invalid PIN. Must be 1-4 digits.");
+                                } else {
+                                    int new_pin_val = atoi(new_pin_str);
+                                    if (new_pin_val >= 0 && new_pin_val <= 9999) {
+                                        pin = new_pin_val;
+                                        mvwprintw(subsubwin, 6, 2, "PIN updated to: %d", pin);
+                                        reload_data_and_update(regno, pin, user_name, balance);
+                                    } else {
+                                        mvwprintw(subsubwin, 6, 2, "Invalid PIN. Must be 0000-9999.");
+                                    }
+                                }
                             }
+                            wrefresh(subsubwin);
+                            while ((c_input = wgetch(subsubwin)) != 27) {}
+                            werase(subsubwin);
+                            wborder(subsubwin, ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ');
+                            wrefresh(subsubwin);
+                            delwin(subsubwin);
                         }
-                        wrefresh(subsubwin);
-
-                        while ((c_input = wgetch(subsubwin)) != 27) {}
-                        werase(subsubwin);
-                        wborder(subsubwin, ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ');
-                        wrefresh(subsubwin);
-                        delwin(subsubwin);
                         break;
                     }
                 }
@@ -527,34 +573,92 @@ int main() {
     int win_width = 40;
     int starty = (max_y - win_height) / 2;
     int startx = (max_x - win_width) / 2;
-    WINDOW *loginwin = newwin(win_height, win_width, starty, startx);
-    box(loginwin, 0, 0);
 
-    // login
-    mvwprintw(loginwin, 1, (win_width - 11) / 2, " LOGIN ");
-    mvwprintw(loginwin, 3, 2, "Register No: ");
-    mvwprintw(loginwin, 5, 2, "PIN: ");
-    wmove(loginwin, 3, 15);
-    wrefresh(loginwin);
+    while (1) { // loop until login is successful
+        WINDOW *loginwin = newwin(win_height, win_width, starty, startx);
+        box(loginwin, 0, 0);
 
-    // regno
-    char regno[20];
-    wgetnstr(loginwin, regno, sizeof(regno) - 1);
+        // login
+        mvwprintw(loginwin, 1, (win_width - 11) / 2, " LOGIN ");
+        mvwprintw(loginwin, 3, 2, "Register No: ");
+        mvwprintw(loginwin, 5, 2, "PIN: ");
+        wmove(loginwin, 3, 15);
+        wrefresh(loginwin);
 
-    // move to pin
-    wmove(loginwin, 5, 7);
-    wrefresh(loginwin);
+        // regno
+        echo();
+        char regno[20];
+        wgetnstr(loginwin, regno, sizeof(regno) - 1);
+        noecho();
 
-    // pin
-    char pin_str[10];
-    wgetnstr(loginwin, pin_str, sizeof(pin_str) - 1);
-    int pin = atoi(pin_str);
+        // move to pin
+        wmove(loginwin, 5, 7);
+        wrefresh(loginwin);
 
-    delwin(loginwin);
-    clear();
-    refresh();
+        // pin
+        char pin_str[10];
+        int pin_idx = 0;
+        while (1) {
+            int ch = wgetch(loginwin);
+            if (ch == '\n') {
+                pin_str[pin_idx] = '\0';
+                break;
+            } else if (ch == KEY_BACKSPACE || ch == 127) {
+                if (pin_idx > 0) {
+                    pin_idx--;
+                    pin_str[pin_idx] = '\0';
 
-    process_transaction(regno, pin);
+                    int y, x;
+                    getyx(loginwin, y, x);
+                    if (x > 7) {
+                        mvwaddch(loginwin, y, x - 1, ' ');
+                        wmove(loginwin, y, x - 1);
+                    }
+                }
+            } else if (isdigit(ch) && pin_idx < (int)(sizeof(pin_str) - 1)) {
+                pin_str[pin_idx++] = ch;
+                waddch(loginwin, '*');
+            }
+            wrefresh(loginwin);
+        }
+
+        int pin = atoi(pin_str);
+
+        char *data = fetch_gist_content();
+        if (!data) {
+            mvwprintw(loginwin, 7, 2, "Failed to fetch data. Try again.");
+            wrefresh(loginwin);
+            delwin(loginwin);
+            continue;
+        }
+
+        int found = 0;
+        char *line = strtok(data, "\n");
+        while (line) {
+            char file_regno[20];
+            int file_pin;
+            sscanf(line, "%[^,],%d", file_regno, &file_pin);
+            if (strcmp(file_regno, regno) == 0 && file_pin == pin) {
+                found = 1;
+                break;
+            }
+            line = strtok(NULL, "\n");
+        }
+        free(data);
+
+        if (found) {
+            delwin(loginwin);
+            clear();
+            refresh();
+            process_transaction(regno, pin);
+            break;
+        } else {
+            // mvwprintw(loginwin, 7, 2, "Incorrect Register No or PIN. Try again.");
+            wrefresh(loginwin);
+            delwin(loginwin);
+        }
+    }
 
     endwin();
+    return 0;
 }
